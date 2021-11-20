@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-20 21:42:22
+ * @LastEditTime: 2021-11-21 01:14:47
  */
 package alfheimdbwal
 
@@ -155,6 +155,8 @@ func (wal *AlfheimDBWAL) RefreshAllMinAndMaxIndex() {
 	}
 }
 func (wal *AlfheimDBWAL) TruncateLog(start, end int64) {
+	wal.Mutex.Lock()
+	defer wal.Mutex.Unlock()
 	if wal.FileIndex.Len() == 0 {
 		return
 	}

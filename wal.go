@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 16:10:33
+ * @LastEditTime: 2021-11-21 18:48:38
  */
 package alfheimdbwal
 
@@ -50,7 +50,7 @@ func (wal *AlfheimDBWAL) BuildDirIndex() {
 		logrus.Fatal("Read wal dir error, ", err)
 	}
 
-	aFileChan := make(chan *AlfheimDBWALFile, len(files))
+	aFileChan := make(chan *AlfheimDBWALFile)
 	for _, file := range files {
 		go GoFuncNewAlfheimDBWALFile(filepath.Join(wal.Dirname, file.Name()), sList, fileMap, aFileChan)
 		i := 0

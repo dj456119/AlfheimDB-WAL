@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:38:09
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 16:24:53
+ * @LastEditTime: 2021-11-21 19:00:44
  */
 package alfheimdbwal
 
@@ -42,6 +42,7 @@ type AlfheimDBWALFile struct {
 	Filename     string
 	Header       *AlfheimDBWALFileHeader
 	HeaderLength int64
+	AppendFlag   bool
 }
 
 type AlfheimDBWALFileHeader struct {
@@ -69,6 +70,7 @@ func NewAlfheimDBWALFile(filename string) *AlfheimDBWALFile {
 func (aFile *AlfheimDBWALFile) LoadFileHeader() {
 	header := new(AlfheimDBWALFileHeader)
 	lengthBytes := make([]byte, 8)
+	aFile.AppendFlag = false
 	n := ReadFile(*aFile.File, 0, 8, lengthBytes)
 	if n != 8 {
 		logrus.Info("No have file header, init file header")
@@ -78,6 +80,7 @@ func (aFile *AlfheimDBWALFile) LoadFileHeader() {
 	} else {
 		length := ReadInt64FromBuff(lengthBytes, true)
 		buff := make([]byte, length)
+		aFile.AppendFlag = false
 		ReadFile(*aFile.File, 8, int64(length), buff)
 		err := json.Unmarshal(buff, header)
 		if err != nil {
@@ -96,7 +99,8 @@ func (aFile *AlfheimDBWALFile) SaveFileHeader() {
 	buff := make([]byte, len(b)+8)
 	WriteInt64ToBuff(buff, int64(len(b)), true)
 	copy(buff[8:], b)
-	WriteFile(*aFile.File, 0, buff)
+	WriteFile(*aFile.File, 0, buff, aFile.AppendFlag)
+	aFile.AppendFlag = false
 }
 
 //true: ths pos is Truncated
@@ -118,6 +122,7 @@ func (aFile *AlfheimDBWALFile) ReadLog(index int64) []byte {
 	}
 	if lItem, ok := aFile.LogItems[index]; ok {
 		buff := make([]byte, lItem.Length)
+		aFile.AppendFlag = false
 		n := ReadFile(*aFile.File, int64(lItem.Pos), int64(lItem.Length), buff)
 		if n == 0 {
 			return nil
@@ -226,11 +231,14 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) int {
 	return TRUNCATED_OK
 }
 
-func WriteFile(file os.File, pos int64, data []byte) {
-	_, err := file.Seek(pos, 0)
-	if err != nil {
-		logrus.Fatal("Seek file error", err)
+func WriteFile(file os.File, pos int64, data []byte, appendFlag bool) {
+	if !appendFlag {
+		_, err := file.Seek(pos, 0)
+		if err != nil {
+			logrus.Fatal("Seek file error", err)
+		}
 	}
+
 	length := 0
 	for {
 		l, err := file.Write(data)
@@ -244,7 +252,7 @@ func WriteFile(file os.File, pos int64, data []byte) {
 		data = data[length:]
 	}
 
-	err = syscall.Fsync(int(file.Fd()))
+	err := syscall.Fsync(int(file.Fd()))
 
 	if err != nil {
 		logrus.Fatal("Sync disk error, ", err)
@@ -278,7 +286,8 @@ func ReadFile(file os.File, pos, length int64, buff []byte) int64 {
 }
 
 func (aFile *AlfheimDBWALFile) WriteLog(lItem *LogItem, data []byte) {
-	WriteFile(*aFile.File, aFile.Pos, data)
+	WriteFile(*aFile.File, aFile.Pos, data, aFile.AppendFlag)
+	aFile.AppendFlag = true
 	lItem.Pos = uint64(aFile.Pos) + 8 + 8
 	aFile.Pos = int64(lItem.Pos) + int64(lItem.Length)
 	aFile.LogIndex.Set(lItem.Index, lItem)
@@ -287,7 +296,8 @@ func (aFile *AlfheimDBWALFile) WriteLog(lItem *LogItem, data []byte) {
 }
 
 func (aFile *AlfheimDBWALFile) BatchWriteLogs(lItems []*LogItem, data []byte) {
-	WriteFile(*aFile.File, aFile.Pos, data)
+	WriteFile(*aFile.File, aFile.Pos, data, aFile.AppendFlag)
+	aFile.AppendFlag = true
 	for _, lItem := range lItems {
 		lItem.Pos = uint64(aFile.Pos) + 8 + 8
 		aFile.Pos = int64(lItem.Pos) + int64(lItem.Length)
@@ -323,6 +333,7 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 	for {
 
 		//Read length
+		aFile.AppendFlag = false
 		count := ReadFile(*aFile.File, pos, int64(len(buff)), buff)
 		if int(count) != len(buff) {
 			if count > 0 {

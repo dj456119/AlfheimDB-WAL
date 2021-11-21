@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-20 11:18:45
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 16:24:34
+ * @LastEditTime: 2021-11-21 18:31:35
 -->
 # AlfheimDB-WAL(Testing)
 The AlfheimDB's high performance write-ahead log.
@@ -71,4 +71,4 @@ BatchWrite: 100bytes, 200 logs, loop 10000 1.6s
 
 ## CENTOS 7 8C8G HDD
 
-BatchWrite: 100bytes, 200 logs, loop 10000 12.3s 
+BatchWrite: 100bytes, 200 logs, loop 10000 5.6s 

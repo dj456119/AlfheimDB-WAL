@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:38:09
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-20 21:37:41
+ * @LastEditTime: 2021-11-21 16:24:53
  */
 package alfheimdbwal
 
@@ -21,7 +21,7 @@ import (
 
 // WAL file struct in storage:
 // ┌───────────┬───────────┐
-// │ 1M header │   logs    │
+// │ 1K header │   logs    │
 // └───────────┴───────────┘
 // The file header struct:
 // ┌───────────────┬─────────────────────────────┐
@@ -58,8 +58,8 @@ func NewAlfheimDBWALFile(filename string) *AlfheimDBWALFile {
 	aFile := new(AlfheimDBWALFile)
 	aFile.MinIndex = -1
 	aFile.Filename = filename
-	// 1M header
-	aFile.HeaderLength = 1 << 20
+	// 1K header
+	aFile.HeaderLength = 1 << 10
 
 	aFile.Mutex = new(sync.Mutex)
 	aFile.BuildLogIndex()
@@ -69,18 +69,23 @@ func NewAlfheimDBWALFile(filename string) *AlfheimDBWALFile {
 func (aFile *AlfheimDBWALFile) LoadFileHeader() {
 	header := new(AlfheimDBWALFileHeader)
 	lengthBytes := make([]byte, 8)
-	ReadFile(*aFile.File, 0, 8, lengthBytes)
-	length := ReadInt64FromBuff(lengthBytes, true)
-	buff := make([]byte, length)
-	ReadFile(*aFile.File, 8, int64(length), buff)
-	err := json.Unmarshal(buff, header)
-	if err != nil {
-		logrus.Fatal("Load file header error, ", err)
-	}
-	if header.TruncateArea == nil {
+	n := ReadFile(*aFile.File, 0, 8, lengthBytes)
+	if n != 8 {
+		logrus.Info("No have file header, init file header")
 		header.TruncateArea = []*TruncateArea{}
+		aFile.Header = header
+		aFile.SaveFileHeader()
+	} else {
+		length := ReadInt64FromBuff(lengthBytes, true)
+		buff := make([]byte, length)
+		ReadFile(*aFile.File, 8, int64(length), buff)
+		err := json.Unmarshal(buff, header)
+		if err != nil {
+			logrus.Fatal("Load file header error, ", err)
+		}
+		aFile.Header = header
 	}
-	aFile.Header = header
+
 }
 
 func (aFile *AlfheimDBWALFile) SaveFileHeader() {
@@ -113,7 +118,10 @@ func (aFile *AlfheimDBWALFile) ReadLog(index int64) []byte {
 	}
 	if lItem, ok := aFile.LogItems[index]; ok {
 		buff := make([]byte, lItem.Length)
-		ReadFile(*aFile.File, int64(lItem.Pos), int64(lItem.Length), buff)
+		n := ReadFile(*aFile.File, int64(lItem.Pos), int64(lItem.Length), buff)
+		if n == 0 {
+			return nil
+		}
 		return buff
 	}
 	return nil
@@ -235,21 +243,30 @@ func WriteFile(file os.File, pos int64, data []byte) {
 		}
 		data = data[length:]
 	}
+
 	err = syscall.Fsync(int(file.Fd()))
+
 	if err != nil {
 		logrus.Fatal("Sync disk error, ", err)
 	}
 }
 
-func ReadFile(file os.File, pos, length int64, buff []byte) {
+func ReadFile(file os.File, pos, length int64, buff []byte) int64 {
 	_, err := file.Seek(pos, 0)
 	if err != nil {
 		logrus.Fatal("Seek file error, ", err)
 	}
 	var readCount int64
 	for readCount != length {
+
 		n, err := file.Read(buff[readCount:])
 		if err != nil {
+			if err.Error() == "EOF" {
+				if n > 0 {
+					return readCount + int64(n)
+				}
+				return readCount
+			}
 			logrus.Fatal("Read file error, ", err)
 		}
 		if n == 0 || n == -1 {
@@ -257,6 +274,7 @@ func ReadFile(file os.File, pos, length int64, buff []byte) {
 		}
 		readCount = readCount + int64(n)
 	}
+	return readCount
 }
 
 func (aFile *AlfheimDBWALFile) WriteLog(lItem *LogItem, data []byte) {
@@ -294,12 +312,6 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 	var pos, allLength int64
 	pos = aFile.HeaderLength
 
-	//get file stat
-	fileStat, err := aFile.File.Stat()
-	if err != nil {
-		logrus.Fatal("Read file stat error, ", err)
-	}
-
 	//tree index
 	sList := skiplist.New(skiplist.Int64)
 	//map index
@@ -308,11 +320,18 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 	buff := make([]byte, 16)
 	indexCount := 0
 
-	for allLength < fileStat.Size() {
-		lItem := new(LogItem)
+	for {
 
 		//Read length
-		ReadFile(*aFile.File, pos, int64(len(buff)), buff)
+		count := ReadFile(*aFile.File, pos, int64(len(buff)), buff)
+		if int(count) != len(buff) {
+			if count > 0 {
+				logrus.Fatal("Read dirty bytes, ", count)
+			}
+			logrus.Info("Read over")
+			break
+		}
+		lItem := new(LogItem)
 		lItem.Length = ReadInt64FromBuff(buff, true)
 
 		//Read index
@@ -320,7 +339,7 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 		allLength = allLength + int64(lItem.Length) + 8 + 8
 		lItem.Pos = uint64(pos) + 8 + 8
 
-		pos = allLength
+		pos = allLength + aFile.HeaderLength
 
 		//filter if log is truncated
 		if aFile.FilterTruncated(int64(lItem.Pos)) {
@@ -335,7 +354,7 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 		aFile.RefreshMinAndMaxIndex(lItem)
 	}
 	logrus.Info("All load log item count : ", indexCount)
-	aFile.Pos = allLength
+	aFile.Pos = aFile.HeaderLength + allLength
 	aFile.LogItems = logItems
 	aFile.LogIndex = sList
 	return

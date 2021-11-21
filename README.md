@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-20 11:18:45
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 02:14:02
+ * @LastEditTime: 2021-11-21 16:24:34
 -->
 # AlfheimDB-WAL(Testing)
 The AlfheimDB's high performance write-ahead log.
@@ -12,7 +12,7 @@ The AlfheimDB's high performance write-ahead log.
 ````
  WAL file struct in storage:  
  ┌───────────┬───────────┐  
- │ 1M header │   logs    │  
+ │ 1K header │   logs    │  
  └───────────┴───────────┘  
  The file header struct:  
  ┌───────────────┬─────────────────────────────┐  

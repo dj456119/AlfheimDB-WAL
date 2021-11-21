@@ -4,13 +4,14 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 02:10:45
+ * @LastEditTime: 2021-11-21 16:10:33
  */
 package alfheimdbwal
 
 import (
 	"fmt"
 	"io/ioutil"
+	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -34,6 +35,7 @@ type AlfheimDBWAL struct {
 func NewWAL(waldir string) *AlfheimDBWAL {
 	wal := new(AlfheimDBWAL)
 	wal.Dirname = waldir
+	wal.MaxItems = 1000000
 	wal.Mutex = new(sync.Mutex)
 	wal.BuildDirIndex()
 	return wal
@@ -50,10 +52,20 @@ func (wal *AlfheimDBWAL) BuildDirIndex() {
 
 	aFileChan := make(chan *AlfheimDBWALFile, len(files))
 	for _, file := range files {
-		go GoFuncNewAlfheimDBWALFile(file.Name(), sList, fileMap, aFileChan)
+		go GoFuncNewAlfheimDBWALFile(filepath.Join(wal.Dirname, file.Name()), sList, fileMap, aFileChan)
 		i := 0
 		for i != len(files) {
 			aFile := <-aFileChan
+			i++
+			if aFile.LogIndex.Len() == 0 {
+				logrus.Info("File is empty, remove: ", aFile.Filename)
+				aFile.Close()
+				err := os.Remove(aFile.Filename)
+				if err != nil {
+					log.Fatal("Init file remove error, ", err)
+				}
+				continue
+			}
 			sList.Set(aFile.MinIndex, aFile)
 			fileMap[aFile.MinIndex] = aFile
 		}
@@ -64,9 +76,7 @@ func (wal *AlfheimDBWAL) BuildDirIndex() {
 	wal.MaxIndex = 0
 	wal.FileIndex = sList
 	wal.AFiles = fileMap
-	for _, v := range wal.AFiles {
-		wal.RefreshMinAndMaxIndex(v)
-	}
+	wal.RefreshAllMinAndMaxIndex()
 	wal.Mutex.Unlock()
 	return
 }
@@ -163,6 +173,7 @@ func (wal *AlfheimDBWAL) RefreshAllMinAndMaxIndex() {
 	for _, v := range wal.AFiles {
 		wal.RefreshMinAndMaxIndex(v)
 	}
+	logrus.Info("The min log is:", wal.MinIndex, ", max log is:", wal.MaxIndex)
 }
 
 //truncate log, [start, end]

@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-22 10:58:24
+ * @LastEditTime: 2021-11-22 15:03:55
  */
 package alfheimdbwal
 
@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -51,11 +52,17 @@ func (wal *AlfheimDBWAL) BuildDirIndex() {
 	}
 
 	aFileChan := make(chan *AlfheimDBWALFile)
+	matchCount := 0
 	for _, file := range files {
+		if !strings.HasPrefix(file.Name(), "log") {
+			logrus.Info("No match file name: ", file.Name())
+			continue
+		}
+		matchCount++
 		go GoFuncNewAlfheimDBWALFile(filepath.Join(wal.Dirname, file.Name()), sList, fileMap, aFileChan)
 	}
 
-	for i := 0; i != len(files); {
+	for i := 0; i != matchCount; {
 		aFile := <-aFileChan
 		i++
 		if aFile.LogIndex.Len() == 0 {
@@ -143,7 +150,10 @@ func (wal *AlfheimDBWAL) GetLog(index int64) []byte {
 	if elem == nil {
 		elem = wal.FileIndex.Back()
 	} else {
-		elem = elem.Prev()
+		if index != elem.Key().(int64) {
+			elem = elem.Prev()
+		}
+
 	}
 	aFile := elem.Value.(*AlfheimDBWALFile)
 	return aFile.ReadLog(index)

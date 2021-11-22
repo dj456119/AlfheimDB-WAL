@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-21 18:48:38
+ * @LastEditTime: 2021-11-22 10:58:24
  */
 package alfheimdbwal
 
@@ -35,7 +35,7 @@ type AlfheimDBWAL struct {
 func NewWAL(waldir string) *AlfheimDBWAL {
 	wal := new(AlfheimDBWAL)
 	wal.Dirname = waldir
-	wal.MaxItems = 1000000
+	wal.MaxItems = 10000000
 	wal.Mutex = new(sync.Mutex)
 	wal.BuildDirIndex()
 	return wal
@@ -53,22 +53,22 @@ func (wal *AlfheimDBWAL) BuildDirIndex() {
 	aFileChan := make(chan *AlfheimDBWALFile)
 	for _, file := range files {
 		go GoFuncNewAlfheimDBWALFile(filepath.Join(wal.Dirname, file.Name()), sList, fileMap, aFileChan)
-		i := 0
-		for i != len(files) {
-			aFile := <-aFileChan
-			i++
-			if aFile.LogIndex.Len() == 0 {
-				logrus.Info("File is empty, remove: ", aFile.Filename)
-				aFile.Close()
-				err := os.Remove(aFile.Filename)
-				if err != nil {
-					log.Fatal("Init file remove error, ", err)
-				}
-				continue
+	}
+
+	for i := 0; i != len(files); {
+		aFile := <-aFileChan
+		i++
+		if aFile.LogIndex.Len() == 0 {
+			logrus.Info("File is empty, remove: ", aFile.Filename)
+			aFile.Close()
+			err := os.Remove(aFile.Filename)
+			if err != nil {
+				log.Fatal("Init file remove error, ", err)
 			}
-			sList.Set(aFile.MinIndex, aFile)
-			fileMap[aFile.MinIndex] = aFile
+			continue
 		}
+		sList.Set(aFile.MinIndex, aFile)
+		fileMap[aFile.MinIndex] = aFile
 	}
 
 	wal.Mutex.Lock()

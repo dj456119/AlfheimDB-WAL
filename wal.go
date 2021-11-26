@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:24:19
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-22 15:03:55
+ * @LastEditTime: 2021-11-26 15:14:05
  */
 package alfheimdbwal
 
@@ -36,7 +36,8 @@ type AlfheimDBWAL struct {
 func NewWAL(waldir string) *AlfheimDBWAL {
 	wal := new(AlfheimDBWAL)
 	wal.Dirname = waldir
-	wal.MaxItems = 10000000
+	wal.MaxItems = 1000
+	wal.IsBigEndian = true
 	wal.Mutex = new(sync.Mutex)
 	wal.BuildDirIndex()
 	return wal
@@ -97,8 +98,13 @@ func GoFuncNewAlfheimDBWALFile(filename string, sList *skiplist.SkipList, fileMa
 func (wal *AlfheimDBWAL) WriteLog(lItem *LogItem, data []byte) {
 	wal.Mutex.Lock()
 	defer wal.Mutex.Unlock()
+
+	if lItem == nil || len(data) == 0 {
+		logrus.Warn("Empty logs written.")
+		return
+	}
 	if wal.FileIndex.Len() == 0 || wal.FileIndex.Back().Value.(*AlfheimDBWALFile).LogIndex.Len() >= int(wal.MaxItems) {
-		aFile := wal.CreateNewFile()
+		aFile := wal.CreateNewFile(lItem.Index)
 		aFile.WriteLog(lItem, data)
 		wal.FileIndex.Set(aFile.MinIndex, aFile)
 		wal.AFiles[aFile.MinIndex] = aFile
@@ -117,8 +123,13 @@ func (wal *AlfheimDBWAL) WriteLog(lItem *LogItem, data []byte) {
 func (wal *AlfheimDBWAL) BatchWriteLog(lItems []*LogItem, data []byte) {
 	wal.Mutex.Lock()
 	defer wal.Mutex.Unlock()
+	if len(lItems) == 0 || len(data) == 0 {
+		logrus.Warn("Empty logs written.")
+		return
+	}
+	firstIndex := lItems[0].Index
 	if wal.FileIndex.Len() == 0 || wal.FileIndex.Back().Value.(*AlfheimDBWALFile).LogIndex.Len() >= int(wal.MaxItems) {
-		aFile := wal.CreateNewFile()
+		aFile := wal.CreateNewFile(firstIndex)
 		aFile.BatchWriteLogs(lItems, data)
 		wal.FileIndex.Set(aFile.MinIndex, aFile)
 		wal.AFiles[aFile.MinIndex] = aFile
@@ -159,9 +170,9 @@ func (wal *AlfheimDBWAL) GetLog(index int64) []byte {
 	return aFile.ReadLog(index)
 }
 
-//log file name: log_${unixtimestamp}.dat
-func (wal *AlfheimDBWAL) CreateNewFile() *AlfheimDBWALFile {
-	fileName := fmt.Sprintf("log_%d.dat", time.Now().Unix())
+//log file name: log_${unixtimestamp}_index.dat
+func (wal *AlfheimDBWAL) CreateNewFile(index int64) *AlfheimDBWALFile {
+	fileName := fmt.Sprintf("log_%d_%d.dat", time.Now().Unix(), index)
 	fullName := filepath.Join(wal.Dirname, fileName)
 	return NewAlfheimDBWALFile(fullName)
 }
@@ -180,6 +191,8 @@ func (wal *AlfheimDBWAL) RefreshMinAndMaxIndex(aFile *AlfheimDBWALFile) {
 
 //refresh min and max index from all file
 func (wal *AlfheimDBWAL) RefreshAllMinAndMaxIndex() {
+	wal.MinIndex = -1
+	wal.MaxIndex = 0
 	for _, v := range wal.AFiles {
 		wal.RefreshMinAndMaxIndex(v)
 	}
@@ -190,51 +203,76 @@ func (wal *AlfheimDBWAL) RefreshAllMinAndMaxIndex() {
 func (wal *AlfheimDBWAL) TruncateLog(start, end int64) {
 	wal.Mutex.Lock()
 	defer wal.Mutex.Unlock()
-	if wal.FileIndex.Len() == 0 {
-		return
-	}
-	tempStart := start
-	for {
-		//Get afile from skiplist
-		elem := wal.FileIndex.Find(tempStart)
-		if elem == nil {
-			break
-		}
 
-		aFile := elem.Value.(*AlfheimDBWALFile)
-		index := elem.Value.(int64)
-		//index out of range [start, end]
-		if index > end {
-			break
-		}
-
-		//truncate log
-		switch aFile.TruncateLog(start, end) {
-		case NO_TRUNCATED | TRUNCATED_OK:
-			// remove file
-			if aFile.LogIndex.Len() == 0 {
-				aFile.Close()
-				err := os.Remove(aFile.File.Name())
-				if err != nil {
-					logrus.Fatal("Remove file error, ", err)
+	RangeAlfheimDBWALFile(wal.FileIndex, start, end,
+		func(key int64, aFile *AlfheimDBWALFile) bool {
+			logrus.Info("Truncate file: ", aFile.Filename)
+			//truncate logx
+			flag := aFile.TruncateLog(start, end)
+			switch flag {
+			case NO_TRUNCATED:
+				fallthrough
+			case TRUNCATED_OK:
+				fallthrough
+			case REMOVE_FILE:
+				// need remove
+				if aFile.LogIndex.Len() == 0 || flag == REMOVE_FILE {
+					aFile.Close()
+					err := os.Remove(aFile.File.Name())
+					if err != nil {
+						logrus.Fatal("Remove file error, ", err)
+					}
+					logrus.Info("File remove: ", aFile.Filename)
+					delete(wal.AFiles, aFile.MinIndex)
+					return false
 				}
-				wal.FileIndex.Remove(index)
-				delete(wal.AFiles, index)
+			default:
+				logrus.Fatal("Unknow truncate stat: ", flag)
 			}
-		case REMOVE_FILE:
-			//remove file
-			aFile.Close()
-			err := os.Remove(aFile.File.Name())
-			if err != nil {
-				logrus.Fatal("Remove file error, ", err)
-			}
-			wal.FileIndex.Remove(index)
-			delete(wal.AFiles, index)
-		default:
-			logrus.Fatal("Unknow truncate stat")
-		}
-		start = tempStart
-	}
+			return true
+		})
+
 	//refresh min and max index from all file
 	wal.RefreshAllMinAndMaxIndex()
+}
+
+func RangeAlfheimDBWALFile(sList *skiplist.SkipList, startIndex, endIndex int64, exec func(key int64, value *AlfheimDBWALFile) bool) {
+	if sList.Len() == 0 {
+		return
+	}
+
+	if sList.Front().Key().(int64) > endIndex || sList.Back().Value.(*AlfheimDBWALFile).MaxIndex < startIndex {
+		return
+	}
+
+	var firstAFileElem *skiplist.Element
+
+	//If startIndex == aFile.minIndex, the startIndex must in this file
+	firstAFileElem = sList.Find(startIndex)
+
+	//If firstAFileElem == nil, have no elem's minIndex greater then startIndex, so elem must in last file
+	if firstAFileElem == nil {
+		firstAFileElem = sList.Back()
+	} else {
+		//If firstAFileElem != nil, compare firstAFileElem's minIndex and startIndex, if minIndex == startIndex, the startIndex must in firstAFileElem, if not, the startIndex in the Elem's prev file
+		if firstAFileElem.Key().(int64) != startIndex {
+			firstAFileElem = firstAFileElem.Prev()
+			//If elem's prev is nil, startIndex must in first file
+			if firstAFileElem == nil {
+				firstAFileElem = sList.Front()
+			}
+		}
+	}
+
+	for {
+		b := exec(firstAFileElem.Key().(int64), firstAFileElem.Value.(*AlfheimDBWALFile))
+		next := firstAFileElem.Next()
+		if !b {
+			sList.Remove(firstAFileElem.Key())
+		}
+		if next == nil || next.Key().(int64) > endIndex {
+			break
+		}
+		firstAFileElem = next
+	}
 }

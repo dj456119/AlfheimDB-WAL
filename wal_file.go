@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:38:09
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-22 14:35:59
+ * @LastEditTime: 2021-11-26 14:59:47
  */
 package alfheimdbwal
 
@@ -120,6 +120,7 @@ func (aFile *AlfheimDBWALFile) ReadLog(index int64) []byte {
 	if index < aFile.MinIndex {
 		return nil
 	}
+
 	if lItem, ok := aFile.LogItems[index]; ok {
 		buff := make([]byte, lItem.Length)
 		aFile.AppendFlag = false
@@ -132,13 +133,15 @@ func (aFile *AlfheimDBWALFile) ReadLog(index int64) []byte {
 	return nil
 }
 
+type TruncateStatus int8
+
 const (
-	NO_TRUNCATED = -1
-	REMOVE_FILE  = 1
-	TRUNCATED_OK = 0
+	NO_TRUNCATED TruncateStatus = -1
+	REMOVE_FILE  TruncateStatus = 1
+	TRUNCATED_OK TruncateStatus = 0
 )
 
-func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) int {
+func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) TruncateStatus {
 	if aFile.LogIndex.Len() == 0 {
 		return REMOVE_FILE
 	}
@@ -165,6 +168,7 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) int {
 	// │5│6│7│8│9│10│11│12│13│
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	if aFile.MaxIndex <= end && aFile.MinIndex <= start {
+		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		lItem := aFile.LogIndex.Find(start)
 		if lItem == nil {
 			return NO_TRUNCATED
@@ -187,11 +191,12 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) int {
 	// │5│6│7│8│9│10│11│12│13│
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	if aFile.MaxIndex >= end && start <= aFile.MinIndex {
+		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		elem := aFile.LogIndex.Find(end)
 		if elem == nil {
 			logrus.Fatal("TruncateLog error, ", start, end, aFile.MaxIndex, aFile.MinIndex)
 		}
-		lItem := elem.Value.(LogItem)
+		lItem := elem.Value.(*LogItem)
 		ta := TruncateArea{Start: 0 + aFile.HeaderLength, End: int64(lItem.Pos) + int64(lItem.Length)}
 		aFile.Header.TruncateArea = append(aFile.Header.TruncateArea, &ta)
 		aFile.SaveFileHeader()
@@ -208,17 +213,18 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) int {
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	// Put these pos into TruncateArea
 	if aFile.MaxIndex >= end && start >= aFile.MinIndex {
+		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		startElem := aFile.LogIndex.Find(start)
 		if startElem == nil {
 			logrus.Fatal("TruncateLog error, ", start, end, aFile.MaxIndex, aFile.MinIndex)
 		}
-		startlItem := startElem.Value.(LogItem)
+		startlItem := startElem.Value.(*LogItem)
 
 		endElem := aFile.LogIndex.Find(end)
 		if endElem == nil {
 			logrus.Fatal("TruncateLog error, ", start, end, aFile.MaxIndex, aFile.MinIndex)
 		}
-		endlItem := endElem.Value.(LogItem)
+		endlItem := endElem.Value.(*LogItem)
 
 		ta := TruncateArea{Start: int64(startlItem.Pos) - 16, End: int64(endlItem.Pos) + int64(endlItem.Length)}
 		aFile.Header.TruncateArea = append(aFile.Header.TruncateArea, &ta)
@@ -309,13 +315,15 @@ func (aFile *AlfheimDBWALFile) BatchWriteLogs(lItems []*LogItem, data []byte) {
 
 func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 	var err error
-
 	//open file with os.O_RDWR and os.O_CREATE, 644
 	aFile.File, err = os.OpenFile(aFile.Filename, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		logrus.Fatal("Open file error, ", err)
 	}
 	logrus.Info("Init wal file, ", aFile.Filename)
+
+	aFile.MaxIndex = 0
+	aFile.MinIndex = -1
 
 	//load file header
 	aFile.LoadFileHeader()
@@ -364,7 +372,7 @@ func (aFile *AlfheimDBWALFile) BuildLogIndex() {
 		sList.Set(lItem.Index, lItem)
 		aFile.RefreshMinAndMaxIndex(lItem)
 	}
-	logrus.Info("All load log item count : ", indexCount)
+	logrus.Info("file load log item count : ", aFile.Filename, indexCount)
 	aFile.Pos = aFile.HeaderLength + allLength
 	aFile.LogItems = logItems
 	aFile.LogIndex = sList

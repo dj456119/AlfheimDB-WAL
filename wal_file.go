@@ -4,7 +4,7 @@
  * @Author: cm.d
  * @Date: 2021-11-18 19:38:09
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-26 14:59:47
+ * @LastEditTime: 2021-11-27 12:57:16
  */
 package alfheimdbwal
 
@@ -99,8 +99,8 @@ func (aFile *AlfheimDBWALFile) SaveFileHeader() {
 	buff := make([]byte, len(b)+8)
 	WriteInt64ToBuff(buff, int64(len(b)), true)
 	copy(buff[8:], b)
-	WriteFile(*aFile.File, 0, buff, aFile.AppendFlag)
 	aFile.AppendFlag = false
+	WriteFile(*aFile.File, 0, buff, aFile.AppendFlag)
 }
 
 //true: ths pos is Truncated
@@ -168,7 +168,7 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) TruncateStatus {
 	// │5│6│7│8│9│10│11│12│13│
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	if aFile.MaxIndex <= end && aFile.MinIndex <= start {
-		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
+		logrus.Infof("case 1: Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		lItem := aFile.LogIndex.Find(start)
 		if lItem == nil {
 			return NO_TRUNCATED
@@ -178,6 +178,7 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) TruncateStatus {
 		if err != nil {
 			log.Fatal("TruncateLog error, ", truncateLogPos, err)
 		}
+		logrus.Infof("case 1: Truncate file %d, %d, %d, %d", lItem.Value.(*LogItem).Index, truncateLogPos, aFile.MinIndex, aFile.MaxIndex)
 		aFile.Close()
 		aFile.BuildLogIndex()
 		return TRUNCATED_OK
@@ -191,7 +192,7 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) TruncateStatus {
 	// │5│6│7│8│9│10│11│12│13│
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	if aFile.MaxIndex >= end && start <= aFile.MinIndex {
-		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
+		logrus.Infof("case2: Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		elem := aFile.LogIndex.Find(end)
 		if elem == nil {
 			logrus.Fatal("TruncateLog error, ", start, end, aFile.MaxIndex, aFile.MinIndex)
@@ -213,7 +214,7 @@ func (aFile *AlfheimDBWALFile) TruncateLog(start, end int64) TruncateStatus {
 	// └─┴─┴─┴─┴─┴──┴──┴──┴──┘
 	// Put these pos into TruncateArea
 	if aFile.MaxIndex >= end && start >= aFile.MinIndex {
-		logrus.Infof("Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
+		logrus.Infof("case3: Truncate file %d, %d, %d, %d", start, end, aFile.MinIndex, aFile.MaxIndex)
 		startElem := aFile.LogIndex.Find(start)
 		if startElem == nil {
 			logrus.Fatal("TruncateLog error, ", start, end, aFile.MaxIndex, aFile.MinIndex)

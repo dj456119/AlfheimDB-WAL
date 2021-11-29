@@ -4,12 +4,12 @@
  * @Author: cm.d
  * @Date: 2021-11-20 11:18:45
  * @LastEditors: cm.d
- * @LastEditTime: 2021-11-27 13:00:45
+ * @LastEditTime: 2021-11-30 00:04:57
 -->
 
 # AlfheimDB-WAL
 
-The AlfheimDB's high performance write-ahead log.
+A high performance write-ahead log.
 
 # Example
 
